@@ -1621,7 +1621,10 @@ impl<Clock: LogicalClock> CommitStateMachine<Clock> {
                         end_tx_id,
                     ) {
                         Some(TransactionState::Committed(committed_end_ts)) => {
-                            turso_assert!(committed_end_ts != tx.begin_ts, "committed end_ts and begin_ts cannot be equal: txn timestamps are strictly monotonic");
+                            turso_assert!(
+                                committed_end_ts != tx.begin_ts,
+                                "committed end_ts and begin_ts cannot be equal: txn timestamps are strictly monotonic"
+                            );
                             if committed_end_ts > tx.begin_ts {
                                 return Err(LimboError::WriteWriteConflict);
                             }
@@ -2092,6 +2095,25 @@ impl<Clock: LogicalClock> CommitStateMachine<Clock> {
     }
 
     fn populate_sync_payload(&self, mvcc_store: &Arc<MvStore<Clock>>, log_record: &mut LogRecord) {
+        if !self.connection.mvcc_sync_payload_enabled() {
+            return;
+        }
+
+        let mut encoded_ops = Vec::new();
+        let mut op_count = 0u32;
+        let mut origin_client_id = None;
+
+        if let Some(header) = log_record.header.as_ref() {
+            encode_header_logical_op(header, &mut encoded_ops);
+            op_count = op_count.saturating_add(1);
+        }
+
+        if log_record.row_versions.is_empty() {
+            log_record.sync_payload = encoded_ops;
+            log_record.sync_op_count = op_count;
+            return;
+        }
+
         // The sync payload is the durable, replay-ready representation of this
         // commit. Build it while the committing connection still has the exact
         // schema context that produced the recovery log record; the server will
@@ -2109,15 +2131,6 @@ impl<Clock: LogicalClock> CommitStateMachine<Clock> {
                     table_names_by_id.insert(MVTableId::from(rootpage), name.clone());
                 }
             }
-        }
-
-        let mut encoded_ops = Vec::new();
-        let mut op_count = 0u32;
-        let mut origin_client_id = None;
-
-        if let Some(header) = log_record.header.as_ref() {
-            encode_header_logical_op(header, &mut encoded_ops);
-            op_count = op_count.saturating_add(1);
         }
 
         let mut schema_upserts = HashMap::default();
@@ -3479,7 +3492,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             Err(err) => {
                 return Err(LimboError::Corrupt(format!(
                     "Failed to read MVCC metadata table: {err}"
-                )))
+                )));
             }
         };
         let mut value: Option<i64> = None;
@@ -5582,12 +5595,12 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             HeaderReadResult::NoLog => {
                 return Err(LimboError::Corrupt(
                     "WAL has committed frames but logical log header is missing".to_string(),
-                ))
+                ));
             }
             HeaderReadResult::Invalid => {
                 return Err(LimboError::Corrupt(
                     "WAL has committed frames but logical log header is invalid".to_string(),
-                ))
+                ));
             }
         };
         self.storage.set_header(header);
@@ -5668,7 +5681,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             HeaderReadResult::Invalid => {
                 return Err(LimboError::Corrupt(
                     "Logical log header corrupt and no WAL recovery available".to_string(),
-                ))
+                ));
             }
         };
 
@@ -5682,7 +5695,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                 None => {
                     return Err(LimboError::Corrupt(
                         "Missing MVCC metadata table".to_string(),
-                    ))
+                    ));
                 }
             }
         } else {
@@ -5746,7 +5759,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                     _ => {
                         return Err(LimboError::Corrupt(
                             "sqlite_schema type must be text".to_string(),
-                        ))
+                        ));
                     }
                 };
                 let name = match record.get_value_opt(1) {
@@ -5754,7 +5767,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                     _ => {
                         return Err(LimboError::Corrupt(
                             "sqlite_schema name must be text".to_string(),
-                        ))
+                        ));
                     }
                 };
                 let table_name = match record.get_value_opt(2) {
@@ -5762,7 +5775,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                     _ => {
                         return Err(LimboError::Corrupt(
                             "sqlite_schema tbl_name must be text".to_string(),
-                        ))
+                        ));
                     }
                 };
                 let root_page = match record.get_value_opt(3) {
@@ -5770,7 +5783,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                     _ => {
                         return Err(LimboError::Corrupt(
                             "sqlite_schema root_page must be integer".to_string(),
-                        ))
+                        ));
                     }
                 };
                 let sql = match record.get_value_opt(4) {
